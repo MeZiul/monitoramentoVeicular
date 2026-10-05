@@ -1,0 +1,103 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Veiculo {
+  id        String   @id @default(uuid())
+  placa     String   @unique
+  ativo     Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  avaliacoes      Avaliacao[]
+  revisoesDiarias RevisaoDiaria[]
+
+  @@map("veiculos")
+}
+
+model Sessao {
+  id              String       @id @default(uuid())
+  inicio          DateTime     @default(now())
+  fim             DateTime?
+  ultimaAtividade DateTime?
+  status          StatusSessao @default(EM_ANDAMENTO)
+  createdAt       DateTime     @default(now())
+
+  avaliacoes Avaliacao[]
+
+  @@map("sessoes")
+}
+
+model Avaliacao {
+  id         String   @id @default(uuid())
+  sessaoId   String
+  veiculoId  String
+  inicio     DateTime @default(now())
+  fim        DateTime?
+  observacao String?
+  createdAt  DateTime @default(now())
+
+  sessao  Sessao  @relation(fields: [sessaoId], references: [id])
+  veiculo Veiculo @relation(fields: [veiculoId], references: [id])
+
+  status AvaliacaoStatus[]
+
+  @@index([sessaoId])
+  @@index([veiculoId])
+  @@map("avaliacoes")
+}
+
+model Status {
+  id        String   @id @default(uuid())
+  nome      String   @unique
+  ativo     Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  avaliacoes AvaliacaoStatus[]
+
+  @@map("status")
+}
+
+model AvaliacaoStatus {
+  avaliacaoId String
+  statusId    String
+
+  avaliacao Avaliacao @relation(fields: [avaliacaoId], references: [id], onDelete: Cascade)
+  status Status @relation(fields: [statusId], references: [id], onDelete: Restrict)
+
+  @@id([avaliacaoId, statusId])
+  @@map("avaliacao_status")
+}
+
+model RevisaoDiaria {
+  id           String   @id @default(uuid())
+  veiculoId    String
+  data         DateTime
+  gravador     Boolean  @default(false)
+  rastreamento Boolean  @default(false)
+  seguranca    Boolean  @default(false)
+  resultado    ResultadoRevisao
+  observacao   String?
+  createdAt    DateTime @default(now())
+
+  veiculo Veiculo @relation(fields: [veiculoId], references: [id])
+
+  @@unique([veiculoId, data])
+  @@index([data])
+  @@map("revisoes_diarias")
+}
+
+enum StatusSessao {
+  EM_ANDAMENTO
+  ENCERRADA
+}
+
+enum ResultadoRevisao {
+  CONFORME
+  NAO_CONFORME
+}
