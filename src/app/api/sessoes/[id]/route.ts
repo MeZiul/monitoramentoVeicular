@@ -1,17 +1,34 @@
+
 import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
 
+type Contexto = {
+  params: Promise<{ id: string }>;
+};
+
+type AcaoSessao = "atividade" | "encerrar" | "continuar";
+
+function respostaErro(mensagem: string, status: number) {
+  return NextResponse.json(
+    { erro: mensagem },
+    { status }
+  );
+}
+
+// GET - Consultar sessão e suas avaliações
 export async function GET(
-  request: Request,
-  context: { params: Promise<{ id: string }> }
+  _request: Request,
+  context: Contexto
 ) {
   try {
     const { id } = await context.params;
 
+    if (!id.trim()) {
+      return respostaErro("ID da sessão inválido.", 400);
+    }
+
     const sessao = await prisma.sessao.findUnique({
-      where: {
-        id,
-      },
+      where: { id },
       include: {
         avaliacoes: {
           include: {
@@ -30,103 +47,149 @@ export async function GET(
     });
 
     if (!sessao) {
-      return NextResponse.json(
-        { erro: "Sessão não encontrada." },
-        { status: 404 }
-      );
+      return respostaErro("Sessão não encontrada.", 404);
     }
 
     return NextResponse.json(sessao);
   } catch (error) {
-    console.error(error);
+    console.error("Erro ao consultar sessão:", error);
 
-    return NextResponse.json(
-      { erro: "Não foi possível carregar a sessão." },
-      { status: 500 }
+    return respostaErro(
+      "Não foi possível carregar a sessão.",
+      500
     );
   }
 }
 
+// PATCH - Atualizar o estado da sessão
 export async function PATCH(
   request: Request,
-  context: { params: Promise<{ id: string }> }
+  context: Contexto
 ) {
+  const { id } = await context.params;
+
+  if (!id.trim()) {
+    return respostaErro("ID da sessão inválido.", 400);
+  }
+
+  let body: unknown;
+
   try {
-    const { id } = await context.params;
+    body = await request.json();
+  } catch {
+    return respostaErro(
+      "O corpo da requisição deve ser um JSON válido.",
+      400
+    );
+  }
 
-    const body = await request.json();
+  if (
+    !body ||
+    typeof body !== "object" ||
+    Array.isArray(body)
+  ) {
+    return respostaErro(
+      "Formato da requisição inválido.",
+      400
+    );
+  }
 
-    const sessao = await prisma.sessao.findUnique({
-      where: {
-        id,
-      },
+  const { acao } = body as { acao?: unknown };
+
+  const acoesPermitidas: AcaoSessao[] = [
+    "atividade",
+    "encerrar",
+    "continuar",
+  ];
+
+  if (
+    typeof acao !== "string" ||
+    !acoesPermitidas.includes(acao as AcaoSessao)
+  ) {
+    return respostaErro("Ação inválida.", 400);
+  }
+
+  try {
+    // Confirma a existência da sessão.
+    const existente = await prisma.sessao.findUnique({
+      where: { id },
     });
 
-    if (!sessao) {
-      return NextResponse.json(
-        { erro: "Sessão não encontrada." },
-        { status: 404 }
+    if (!existente) {
+      return respostaErro("Sessão não encontrada.", 404);
+    }
+
+    // Sessões encerradas são imutáveis.
+    if (existente.status === "ENCERRADA") {
+      return respostaErro(
+        "Esta sessão já foi encerrada e não pode ser alterada.",
+        409
       );
     }
 
-    if (body.acao === "atividade") {
-      const atualizada = await prisma.sessao.update({
+    const agora = new Date();
+
+    if (acao === "encerrar") {
+      // Atualização condicional:
+      // somente uma sessão aberta pode ser encerrada.
+      const resultado = await prisma.sessao.updateMany({
         where: {
           id,
+          status: "EM_ANDAMENTO",
+          fim: null,
         },
         data: {
-          ultimaAtividade: new Date(),
-        },
-      });
-
-      return NextResponse.json(atualizada);
-    }
-
-    if (body.acao === "encerrar") {
-      const atualizada = await prisma.sessao.update({
-        where: {
-          id,
-        },
-        data: {
-          fim: new Date(),
           status: "ENCERRADA",
-          ultimaAtividade: new Date(),
+          fim: agora,
+          ultimaAtividade: agora,
         },
       });
 
-      return NextResponse.json(atualizada);
-    }
-
-    if (body.acao === "continuar") {
-      if (sessao.status === "ENCERRADA") {
-        return NextResponse.json(
-          { erro: "Não é possível continuar uma sessão encerrada." },
-          { status: 400 }
+      if (resultado.count !== 1) {
+        return respostaErro(
+          "A sessão não está disponível para encerramento.",
+          409
         );
       }
 
-      const atualizada = await prisma.sessao.update({
-        where: {
-          id,
-        },
-        data: {
-          ultimaAtividade: new Date(),
-        },
+      const encerrada = await prisma.sessao.findUnique({
+        where: { id },
       });
 
-      return NextResponse.json(atualizada);
+      return NextResponse.json(encerrada);
     }
 
-    return NextResponse.json(
-      { erro: "Ação inválida." },
-      { status: 400 }
-    );
-  } catch (error) {
-    console.error(error);
+    // Atividade e continuar têm a mesma semântica:
+    // atualizar a última atividade da sessão aberta.
+    const resultado = await prisma.sessao.updateMany({
+      where: {
+        id,
+        status: "EM_ANDAMENTO",
+        fim: null,
+      },
+      data: {
+        ultimaAtividade: agora,
+      },
+    });
 
-    return NextResponse.json(
-      { erro: "Não foi possível atualizar a sessão." },
-      { status: 500 }
+    if (resultado.count !== 1) {
+      return respostaErro(
+        "Não é possível atualizar uma sessão encerrada.",
+        409
+      );
+    }
+
+    const atualizada = await prisma.sessao.findUnique({
+      where: { id },
+    });
+
+    return NextResponse.json(atualizada);
+  } catch (error) {
+    console.error("Erro ao atualizar sessão:", error);
+
+    return respostaErro(
+      "Não foi possível atualizar a sessão.",
+      500
     );
   }
 }

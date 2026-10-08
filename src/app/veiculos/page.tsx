@@ -151,7 +151,7 @@ export default function VeiculosPage() {
               value={placa}
               onChange={(event) => setPlaca(event.target.value)}
               placeholder="Digite a placa"
-              maxLength={7}
+              maxLength={8}
               className="flex-1 rounded-md border border-gray-300 px-3 py-2 uppercase outline-none focus:border-blue-500 text-black"
             />
 
